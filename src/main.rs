@@ -1,8 +1,11 @@
 use curve25519_dalek::scalar::Scalar;
 use rand::{CryptoRng, RngCore};
 
-const T: usize = 3;
-const N: usize = 5;
+// Secret sharing parameters
+// Parties number
+const N: usize = 3;
+// Threshold
+const T: usize = 2;
 
 fn to_canonical_bytes(s: &str) -> Option<[u8; 32]> {
     let mut res = [0u8; 32];
@@ -96,18 +99,11 @@ fn main() {
     // todo secure random
     let mut rng = rand::thread_rng();
 
-    // generate secret to share
+    // secret to share
     let secret = "Hello, world!";
 
-    // Shamir secret sharing parameters
-
-    let xs: [Scalar; N] = [
-        Scalar::from(1u8),
-        Scalar::from(2u8),
-        Scalar::from(3u8),
-        Scalar::from(4u8),
-        Scalar::from(5u8),
-    ];
+    // Parties indexes
+    let xs: Vec<Scalar> = (1..(N + 1)).map(|i| Scalar::from(i as u8)).collect();
 
     let s = to_canonical_bytes(secret).unwrap();
     let a0 = Scalar::from_bytes_mod_order(s);
