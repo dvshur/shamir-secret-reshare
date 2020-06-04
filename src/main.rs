@@ -74,7 +74,7 @@ fn main() {
 }
 
 fn lagrange_coeffs_at_zero(xs: &[Scalar; T]) -> [Scalar; T] {
-    let mut cs = [Scalar::from(1u8); T];
+    let mut cs = [Scalar::one(); T];
 
     for i in 0..T {
         for j in 0..T {
