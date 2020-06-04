@@ -1,3 +1,5 @@
+use std::convert::TryInto;
+
 use curve25519_dalek::scalar::Scalar;
 use rand::{CryptoRng, RngCore};
 
@@ -79,57 +81,70 @@ impl Polynom {
     }
 }
 
-fn lagrange_coeffs_at_zero(xs: &[Scalar]) -> Vec<Scalar> {
-    let mut cs = Vec::with_capacity(xs.len());
-    for xi in xs {
-        let mut res = Scalar::from(1u8);
-        for xj in xs {
-            if xi == xj {
-                continue;
-            }
+fn lagrange_coeffs_at_zero(xs: &[Scalar; T]) -> [Scalar; T] {
+    let mut cs = [Scalar::from(1u8); T];
 
-            res *= xj * (xj - xi).invert();
+    for i in 0..T {
+        for j in 0..T {
+            if i != j {
+                cs[i] *= xs[j] * (xs[j] - xs[i]).invert();
+            }
         }
-        cs.push(res);
     }
+
     cs
 }
 
-fn main() {
+fn shamir_share(xs: &[Scalar; N], secret: &[u8; 32]) -> [Scalar; N] {
     // todo secure random
     let mut rng = rand::thread_rng();
 
-    // secret to share
-    let secret = "Hello, world!";
+    // zero coefficient
+    let a0 = Scalar::from_bytes_mod_order(secret.clone());
 
-    // Parties indexes
-    let xs: Vec<Scalar> = (1..(N + 1)).map(|i| Scalar::from(i as u8)).collect();
-
-    let s = to_canonical_bytes(secret).unwrap();
-    let a0 = Scalar::from_bytes_mod_order(s);
-
-    // create a random polynom or order 2
+    // create a random polynom or order T - 1 with a given a0
     let polynom = Polynom::random(&mut rng, &a0, T - 1);
 
-    let shares = xs
-        .iter()
-        .map(|xi| (xi.clone(), polynom.at(&xi)))
-        .collect::<Vec<_>>();
+    let mut res = [Scalar::zero(); N];
+    for (i, x) in xs.iter().enumerate() {
+        res[i] = polynom.at(x);
+    }
 
-    // reconstructing parties xs: 1, 2, 3
-    // Lagrange coeffs
-    let lagrange_coeffs = lagrange_coeffs_at_zero(&xs[0..T]);
+    res
+}
 
-    let a0_reconstructed = {
-        let mut res = Scalar::zero();
-        for i in 0..T {
-            res += lagrange_coeffs[i] * shares[i].1;
-        }
-        res
-    };
+fn shamir_reconstruct(xs: &[Scalar; T], shares: &[Scalar; T]) -> [u8; 32] {
+    let lagrange_coeffs = lagrange_coeffs_at_zero(xs);
 
-    let s2 = a0_reconstructed.as_bytes();
-    let s_reconstructed = from_canonical_bytes(&s2).unwrap();
+    let mut res = Scalar::zero();
+    for i in 0..T {
+        res += lagrange_coeffs[i] * shares[i];
+    }
 
-    println!("{}", s_reconstructed);
+    res.as_bytes().clone()
+}
+
+fn main() {
+    // secret to share
+    let secret_string = "Hello, world!";
+
+    // Parties indexes
+    let xs: [Scalar; N] = [Scalar::from(1u8), Scalar::from(2u8), Scalar::from(3u8)];
+
+    let secret = to_canonical_bytes(secret_string).unwrap();
+
+    // SHARE
+    let shares = shamir_share(&xs, &secret);
+
+    // RECONSTRUCT
+    let reconstruct_participants: &[Scalar; T] = &xs[0..T].try_into().expect("fatal error");
+    let reconstruct_participants_shares: &[Scalar; T] =
+        &shares[0..T].try_into().expect("fatal error");
+
+    let secret_reconstructed =
+        shamir_reconstruct(reconstruct_participants, reconstruct_participants_shares);
+
+    let secret_reconstructed_string = from_canonical_bytes(&secret_reconstructed).unwrap();
+
+    println!("{}", secret_reconstructed_string);
 }
