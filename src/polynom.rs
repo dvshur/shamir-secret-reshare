@@ -2,8 +2,9 @@ use crate::pow::Pow;
 use curve25519_dalek::scalar::Scalar;
 use rand::{CryptoRng, RngCore};
 
+#[derive(Default, Debug, Clone)]
 pub struct Polynom {
-    coeffs: Vec<Scalar>,
+    pub coeffs: Vec<Scalar>,
 }
 
 impl Polynom {
@@ -14,7 +15,7 @@ impl Polynom {
 
         p.coeffs.push(zero_coeff.clone());
 
-        for _ in 1..order {
+        for _ in 1..(order + 1) {
             p.coeffs.push(Scalar::random(rng));
         }
 

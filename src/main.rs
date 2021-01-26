@@ -1,8 +1,11 @@
+#![allow(non_snake_case)]
+
 mod polynom;
 mod pow;
 
-use curve25519_dalek::scalar::Scalar;
+use curve25519_dalek::{constants, edwards::EdwardsPoint, scalar::Scalar};
 use polynom::Polynom;
+use pow::Pow;
 use std::convert::TryInto;
 
 // Secret sharing parameters
@@ -12,8 +15,10 @@ const N: usize = 5;
 const T: usize = 3;
 
 fn main() {
+    let mut rng = rand::thread_rng();
+
     // secret to share
-    let secret_string = "Hello, world!";
+    let secret_string = "Hello, world! Nice day today!";
 
     // Parties indexes
     let xs: [Scalar; N] = [
@@ -27,7 +32,10 @@ fn main() {
     let secret = Scalar::from_bytes_mod_order(to_canonical_bytes(secret_string).unwrap());
 
     // SHARE
-    let shares = shamir_share(&xs, &secret);
+    let shares = {
+        let polynom = Polynom::random(&mut rng, &secret, T - 1);
+        shamir_share(&xs, &polynom)
+    };
 
     // RESHARE
     // 1. calculate sij
@@ -38,11 +46,51 @@ fn main() {
     let senders: &[Scalar; T] = &xs[0..T].try_into().expect("fatal error");
     let senders_shares: &[Scalar; T] = &shares[0..T].try_into().expect("fatal error");
 
+    // each redistributing participant generates a random polynom f(x) or order at most T - 1
+    // with the participant's secret share as a zero coefficient
+    let polynoms: Vec<Polynom> = {
+        let mut ps = Vec::with_capacity(T);
+        for i in 0..T {
+            ps.push(Polynom::random(&mut rng, &senders_shares[i], T - 1))
+        }
+        ps
+    };
+
+    // check, as in Pedersen, for validity of the send s_i_j by checking F_i_j
+
+    // calculate F_i_j
+    let Fs: [[EdwardsPoint; T]; T] = {
+        let mut fs = [[EdwardsPoint::default(); T]; T];
+        for i in 0..T {
+            for j in 0..T {
+                fs[i][j] = &polynoms[i].coeffs[j] * &constants::ED25519_BASEPOINT_TABLE;
+            }
+        }
+        fs
+    };
+
+    // secretly send s_i_j
     let mut ss = [[Scalar::zero(); N]; T];
     for i in 0..T {
-        // each sender chares his secret with Shamir SS
+        // each sender shares his secret with Shamir SS
         // and sends them to all recipients
-        ss[i] = shamir_share(&xs, &senders_shares[i]);
+        ss[i] = shamir_share(&xs, &polynoms[i]);
+    }
+
+    // each P_j verifies that temp shares s_i_j received from all P_i
+    // are consistent with previously published F_i_j values
+    for j in 0..N {
+        for i in 0..T {
+            let j_index = xs[j];
+
+            let sum: EdwardsPoint = (0..T)
+                .map(|l| j_index.pow(l as u64))
+                .zip(Fs[i].iter())
+                .map(|(j_pow, F_i_j)| &j_pow * F_i_j)
+                .sum();
+
+            assert_eq!(sum, &ss[i][j] * &constants::ED25519_BASEPOINT_TABLE);
+        }
     }
 
     // 2. reconstruct each party from shares sent to it
@@ -64,8 +112,18 @@ fn main() {
         assert!(shares[i] != shares_v2[i]);
     }
 
+    // check that reconstructed shares are not equal between each other
+    for i in 0..N {
+        for j in (i + 1)..N {
+            assert!(shares_v2[i] != shares_v2[j]);
+        }
+    }
+
     let secret_reconstructed =
         shamir_reconstruct(reconstruct_participants, reconstruct_participants_shares);
+
+    // check that original secret can be reconstructed from new shares
+    assert_eq!(secret, secret_reconstructed);
 
     let secret_reconstructed_string =
         from_canonical_bytes(secret_reconstructed.as_bytes()).unwrap();
@@ -87,12 +145,7 @@ fn lagrange_coeffs_at_zero(xs: &[Scalar; T]) -> [Scalar; T] {
     cs
 }
 
-fn shamir_share(xs: &[Scalar; N], secret: &Scalar) -> [Scalar; N] {
-    let mut rng = rand::thread_rng();
-
-    // create a random polynom f(x) or order T - 1 with the secret as a zero coefficient
-    let polynom = Polynom::random(&mut rng, &secret, T - 1);
-
+fn shamir_share(xs: &[Scalar; N], polynom: &Polynom) -> [Scalar; N] {
     // create shares for parties as yi = f(xi);
     let mut res = [Scalar::zero(); N];
     for (i, x) in xs.iter().enumerate() {
